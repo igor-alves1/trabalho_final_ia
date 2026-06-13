@@ -56,7 +56,7 @@ Isso força o bot a valorizar o entrosamento sem sacrificar demasiadamente a qua
 
 **Passo a passo:**
 1. Clone este repositório:
-   `git clone https://github.com/SEU_USUARIO/eafc26-draft-ai.git`
+   `git clone https://github.com/igor-alves1/trabalho_final_ia.git`
 2. Instale as dependências:
    `pip install -r requirements.txt`
 3. Execute o script principal:
