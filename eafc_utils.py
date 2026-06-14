@@ -1,5 +1,6 @@
 from collections import Counter
 import pandas as pd
+import numpy as np
 
 def chemistry(df: pd.DataFrame) -> dict:
     """
@@ -61,8 +62,6 @@ def chemistry(df: pd.DataFrame) -> dict:
         'details': player_details
     }
 
-import pandas as pd
-from collections import Counter
 
 def chemistry_fractional(df: pd.DataFrame) -> dict:
     """
@@ -129,3 +128,88 @@ def chemistry_fractional(df: pd.DataFrame) -> dict:
         'total': round(total_chemistry, 3),
         'details': player_details
     }
+
+
+def f(simulated_df) -> float:
+    """Calcula a nota final do time simulado."""
+    chem = chemistry(simulated_df)
+    ovr = simulated_df['overall'].mean()
+    return ovr + ((chem['total'] * 1.2) / 11)
+
+
+def fast_f(squad_list: list) -> float:
+    """
+    Versão ultrarrápida da função objetivo focada apenas nas simulações.
+    Recebe uma lista de dicionários nativos do Python ao invés de um DataFrame.
+    """
+    if not squad_list:
+        return 0.0
+
+    count_league = Counter(p['league_id'] for p in squad_list)
+    count_nationality = Counter(p['nationality_id'] for p in squad_list)
+    count_club = Counter(p['club_team_id'] for p in squad_list)
+
+    total_chemistry = 0.0
+    total_ovr = 0.0
+
+    for player in squad_list:
+        total_ovr += player['overall']
+
+        posicao_escolhida = player.get('choosen_position', '')
+        posicoes_da_carta = player.get('player_positions', '')
+
+        if posicao_escolhida in posicoes_da_carta:
+            l_qtd = count_league[player['league_id']]
+            n_qtd = count_nationality[player['nationality_id']]
+            c_qtd = count_club[player['club_team_id']]
+
+            l_pts = 3.0 if l_qtd >= 8 else (2.0 + (l_qtd - 5)/3 if l_qtd >= 5 else (1.0 + (l_qtd - 3)/2 if l_qtd >= 3 else l_qtd/3))
+            n_pts = 3.0 if n_qtd >= 8 else (2.0 + (n_qtd - 5)/3 if n_qtd >= 5 else (1.0 + (n_qtd - 2)/3 if n_qtd >= 2 else n_qtd/2))
+            c_pts = 3.0 if c_qtd >= 7 else (2.0 + (c_qtd - 4)/3 if c_qtd >= 4 else (1.0 + (c_qtd - 2)/2 if c_qtd >= 2 else c_qtd/2))
+
+            total_chemistry += min(3.0, l_pts + n_pts + c_pts)
+
+    mean_ovr = total_ovr / len(squad_list)
+    return mean_ovr + ((total_chemistry * 1.2) / 11)
+
+
+def simulate_rollout(tentative_squad_list: list, db_cache: dict, remaining_positions: list) -> float:
+    current_sim_squad = tentative_squad_list.copy()
+    current_ids = {p['player_id'] for p in current_sim_squad if 'player_id' in p}
+
+    for pos in remaining_positions:
+        cache = db_cache[pos]
+        records = cache['records']
+        probs = cache['probs']
+        n_total = cache['n_players']
+
+        n_draws = min(15, n_total)
+        drawn_indices = np.random.choice(n_total, size=n_draws, replace=False, p=probs)
+
+        pack_dicts = []
+        for idx in drawn_indices:
+            player = records[idx]
+            if player['player_id'] not in current_ids:
+                player_copy = player.copy()
+                player_copy['choosen_position'] = pos
+                pack_dicts.append(player_copy)
+            if len(pack_dicts) == 5:
+                break
+
+        if not pack_dicts:
+            continue
+
+        best_card = None
+        best_sim_score = -float('inf')
+
+        for candidate in pack_dicts:
+            score = fast_f(current_sim_squad + [candidate])
+            if score > best_sim_score:
+                best_sim_score = score
+                best_card = candidate
+
+        if best_card is not None:
+            current_ids.add(best_card['player_id'])
+            current_sim_squad.append(best_card)
+
+    return fast_f(current_sim_squad)
