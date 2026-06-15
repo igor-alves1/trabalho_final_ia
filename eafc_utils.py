@@ -134,7 +134,7 @@ def f(simulated_df) -> float:
     """Calcula a nota final do time simulado."""
     chem = chemistry(simulated_df)
     ovr = simulated_df['overall'].mean()
-    chemistry_total = chem['total'] * 6.66 / 11
+    chemistry_total = chem['total'] * 4 / 11
     return {
         "ovr": ovr,
         "chemistry": chemistry_total,
@@ -175,7 +175,7 @@ def fast_f(squad_list: list) -> float:
             total_chemistry += min(3.0, l_pts + n_pts + c_pts)
 
     mean_ovr = total_ovr / len(squad_list)
-    return mean_ovr + ((total_chemistry * 6.66) / 11)
+    return mean_ovr + ((total_chemistry * 4) / 11)
 
 
 def simulate_rollout(tentative_squad_list: list, db_cache: dict, remaining_positions: list) -> float:

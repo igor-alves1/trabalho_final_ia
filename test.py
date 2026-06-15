@@ -34,7 +34,7 @@ def _json_safe(o):
 
 def save_drafts(drafts):
     with open(DRAFTS_PATH, "w") as fp:
-        json.dump(drafts, fp, default=_json_safe)
+        json.dump(drafts, fp, default=_json_safe, indent=4)
 
 
 def load_drafts():
