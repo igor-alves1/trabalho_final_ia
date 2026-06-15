@@ -5,6 +5,8 @@ from eafc_utils import fast_f, simulate_rollout
 from draft import generate_draft_pack
 import random
 
+FORMACAO = ['ST', 'LW', 'RW', 'CM', 'CM', 'CM', 'LB', 'CB', 'CB', 'RB', 'GK']
+
 class Bot:
     def __init__(self, mode: str = "greedy", num_rollouts: int = 10):
         self.mode = mode
@@ -78,6 +80,23 @@ class Bot:
                         best_index = i
                         best_position = pos
             return best_index, best_position
+
+        elif self.mode == "greedy_ovr":
+            best_index = -1
+            best_position = None
+            best_ovr = -float('inf')
+            for i in range(len(options)):
+                candidate = options.iloc[i].to_dict()
+                card_positions = str(candidate['player_positions']).split(',')
+                valid = [pos for pos in remaining_positions if any(pos.strip() == p.strip() for p in card_positions)]
+                if not valid:
+                    continue
+                if candidate['overall'] > best_ovr:
+                    best_ovr = candidate['overall']
+                    best_index = i
+                    best_position = valid[0] ## Nao afeta o OVR
+            return best_index, best_position
+        
         elif self.mode == "random":
             i = random.randint(0, len(options) - 1)
             candidate = options.iloc[i]
@@ -91,6 +110,96 @@ class Bot:
 
         else:
             raise ValueError(f"Modo '{self.mode}' inválido. Use 'manual', 'greedy_f' ou 'expectimax'.")
+
+    ### Draft pré gerado
+    ### É pra poder avaliar os algoritmos no mesmo draft, tirando o ruído da aleatoriedade das cartas
+    ### A ideia é ter 55 cartas pré definidas, mas os algoritmos usam o DB para escolher ainda
+    @staticmethod
+    def generate_drafts(df, n=100, formacao=FORMACAO, n_cards=5, captain_slot=0):
+        """Gera n drafts pré-sorteados.
+        Retorna {0: draft, 1: draft, ...} onde cada draft é
+        {slot: {"posicao": str, "cartas": [dict, ...]}}."""
+        def plays_position(s, position):
+            return any(position == p.strip() for p in str(s).split(','))
+
+        drafts = {}
+        for i in range(n):
+            draft = {}
+            used_ids = set()
+            for slot_idx, pos in enumerate(formacao):
+                pool = df[df['player_positions'].apply(lambda s: plays_position(s, pos))]
+                pool = pool[~pool['player_id'].isin(used_ids)]
+                if slot_idx == captain_slot:
+                    elite = pool[pool['overall'] >= 88]
+                    if len(elite) >= n_cards:
+                        pool = elite
+                cartas = pool.sample(n=min(n_cards, len(pool)), weights='weight')
+                draft[slot_idx] = {"posicao": pos, "cartas": cartas.to_dict('records')}
+                used_ids.update(cartas['player_id'].tolist())
+            drafts[i] = draft
+        return drafts
+
+    def _choose_card(self, cartas, squad, pos, remaining_after, db_cache):
+        """Escolhe o índice (0-4) da melhor carta para a posição pos já fixada.
+        cartas é uma lista de dicts. squad é uma lista de dicts."""
+        if self.mode == "random":
+            return random.randint(0, len(cartas) - 1)
+
+        elif self.mode == "greedy_ovr":
+            return max(range(len(cartas)), key=lambda i: cartas[i]['overall'])
+
+        elif self.mode == "greedy_f":
+            def score(i):
+                cand = dict(cartas[i])
+                cand['choosen_position'] = pos
+                return fast_f(squad + [cand])
+            return max(range(len(cartas)), key=score)
+
+        elif self.mode == "expectimax":
+            best_index, best_ev = -1, -float('inf')
+            for i, carta in enumerate(cartas):
+                cand = dict(carta)
+                cand['choosen_position'] = pos
+                ev = np.mean([
+                    simulate_rollout(squad + [cand], db_cache, remaining_after)
+                    for _ in range(self.num_rollouts)
+                ])
+                if ev > best_ev:
+                    best_ev = ev
+                    best_index = i
+            return best_index
+
+        raise ValueError(f"Modo '{self.mode}' não suportado em play_draft.")
+
+    def play_draft(self, draft, df_draft):
+        """Joga um draft pré-gerado. Vê só 5 cartas por slot.
+        Expectimax usa o DB inteiro para rollouts, não as cartas restantes."""
+        squad = []
+
+        db_cache = None
+        if self.mode == "expectimax":
+            all_positions = set(slot["posicao"] for slot in draft.values())
+            db_cache = {}
+            for pos in all_positions:
+                df_pos = df_draft[df_draft['player_positions'].str.contains(pos, na=False)].copy()
+                weights = df_pos['weight'].values.astype(float)
+                probs = weights / weights.sum()
+                db_cache[pos] = {'records': df_pos.to_dict('records'), 'probs': probs, 'n_players': len(df_pos)}
+
+        for slot_idx in range(len(draft)):
+            slot = draft[slot_idx]
+            pos = slot["posicao"]
+            cartas = slot["cartas"]
+            remaining_after = [draft[i]["posicao"] for i in range(slot_idx + 1, len(draft))]
+
+            idx = self._choose_card(cartas, squad, pos, remaining_after, db_cache)
+            chosen = dict(cartas[idx])
+            chosen['choosen_position'] = pos
+            squad.append(chosen)
+
+        return squad
+    ####
+    
 
 
 
