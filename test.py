@@ -55,17 +55,14 @@ def run_draft(bot, df_draft):
     return f(pd.DataFrame(meu_time))
 
 
-def run_experiment(nome, bot, df_draft, is_sa=False):
+def run_experiment(nome, bot, df_draft):
     scores = []
     tempos = []
     for i in range(N_RUNS):
         if i % 10 == 0:
             print(f"  [{nome}] {i+1}/{N_RUNS}...")
         inicio = time.time()
-        if is_sa:
-            score = f(bot.montar_time(df_draft, FORMACAO))
-        else:
-            score = run_draft(bot, df_draft)
+        score = run_draft(bot, df_draft)
         tempos.append(time.time() - inicio)
         scores.append(score)
     return scores, tempos
@@ -93,18 +90,17 @@ if __name__ == "__main__":
     df_draft = setup_db()
 
     experimentos = [
-        ("Random",              Bot(mode="random"),                       False),
-        ("Greedy_f",            Bot(mode="greedy_f"),                     False),
-        ("Simulated Annealing", SimulatedAnnealingBot(),                  True),
-        ("Expectimax 500",      Bot(mode="expectimax", num_rollouts=500),  False),
-        ("Expectimax 1000",     Bot(mode="expectimax", num_rollouts=1000), False),
-        ("Expectimax 2000",     Bot(mode="expectimax", num_rollouts=2000), False),
+        ("Random",              Bot(mode="random")),
+        ("Greedy_f",            Bot(mode="greedy_f")),
+        ("Expectimax 500",      Bot(mode="expectimax", num_rollouts=500)),
+        ("Expectimax 1000",     Bot(mode="expectimax", num_rollouts=1000)),
+        ("Expectimax 2000",     Bot(mode="expectimax", num_rollouts=2000)),
     ]
 
     resultados = {}
-    for nome, bot, is_sa in experimentos:
+    for nome, bot in experimentos:
         print(f"\nRodando: {nome}")
-        scores, tempos = run_experiment(nome, bot, df_draft, is_sa)
+        scores, tempos = run_experiment(nome, bot, df_draft)
         resultados[nome] = scores
         print_results(nome, scores)
         save_results(nome, scores, tempos)
