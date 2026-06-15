@@ -134,7 +134,7 @@ def f(simulated_df) -> float:
     """Calcula a nota final do time simulado."""
     chem = chemistry(simulated_df)
     ovr = simulated_df['overall'].mean()
-    return ovr + ((chem['total'] * 1.2) / 11)
+    return ovr + ((chem['total'] * 3.6) / 11)
 
 
 def fast_f(squad_list: list) -> float:
