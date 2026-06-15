@@ -1,5 +1,6 @@
 import json
 import os
+import time
 import pandas as pd
 import numpy as np
 from bot import Bot, SimulatedAnnealingBot
@@ -56,23 +57,26 @@ def run_draft(bot, df_draft):
 
 def run_experiment(nome, bot, df_draft, is_sa=False):
     scores = []
+    tempos = []
     for i in range(N_RUNS):
         if i % 10 == 0:
             print(f"  [{nome}] {i+1}/{N_RUNS}...")
+        inicio = time.time()
         if is_sa:
             score = f(bot.montar_time(df_draft, FORMACAO))
         else:
             score = run_draft(bot, df_draft)
+        tempos.append(time.time() - inicio)
         scores.append(score)
-    return scores
+    return scores, tempos
 
 
-def save_results(nome, scores):
+def save_results(nome, scores, tempos):
     os.makedirs(RESULTS_DIR, exist_ok=True)
     filename = nome.lower().replace(" ", "_") + ".json"
     path = os.path.join(RESULTS_DIR, filename)
     with open(path, "w") as fp:
-        json.dump({"scores": scores}, fp)
+        json.dump({"scores": scores, "tempos": tempos}, fp)
 
 
 def print_results(nome, scores):
@@ -100,10 +104,10 @@ if __name__ == "__main__":
     resultados = {}
     for nome, bot, is_sa in experimentos:
         print(f"\nRodando: {nome}")
-        scores = run_experiment(nome, bot, df_draft, is_sa)
+        scores, tempos = run_experiment(nome, bot, df_draft, is_sa)
         resultados[nome] = scores
         print_results(nome, scores)
-        save_results(nome, scores)
+        save_results(nome, scores, tempos)
 
     print("\n\n---------RESUMO FINAL----------")
     print(f"{'Algoritmo':<25} {'Média':>8} {'Desvio':>8} {'Mín':>8} {'Máx':>8}")
