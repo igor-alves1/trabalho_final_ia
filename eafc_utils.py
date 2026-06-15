@@ -170,7 +170,7 @@ def fast_f(squad_list: list) -> float:
             total_chemistry += min(3.0, l_pts + n_pts + c_pts)
 
     mean_ovr = total_ovr / len(squad_list)
-    return mean_ovr + ((total_chemistry * 1.2) / 11)
+    return mean_ovr + ((total_chemistry * 3.6) / 11)
 
 
 def simulate_rollout(tentative_squad_list: list, db_cache: dict, remaining_positions: list) -> float:

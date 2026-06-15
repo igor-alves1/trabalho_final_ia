@@ -21,8 +21,17 @@ class Bot:
                 except ValueError:
                     print("Entrada inválida. Por favor, digite um número inteiro.")
 
-        elif self.mode == "greedy":
-            return options['overall'].idxmax()
+        elif self.mode == "greedy_f":
+            current_squad_list = current_squad.to_dict('records')
+            best_index = -1
+            best_score = -float('inf')
+            for i in range(len(options)):
+                candidate = options.iloc[i].to_dict()
+                score = fast_f(current_squad_list + [candidate])
+                if score > best_score:
+                    best_score = score
+                    best_index = i
+            return best_index
 
         elif self.mode == "expectimax":
             if current_squad is None or db is None or remaining_positions is None:
@@ -60,4 +69,4 @@ class Bot:
             return best_relative_index
 
         else:
-            raise ValueError(f"Modo '{self.mode}' inválido. Use 'manual', 'greedy' ou 'expectimax'.")
+            raise ValueError(f"Modo '{self.mode}' inválido. Use 'manual', 'greedy_f' ou 'expectimax'.")
