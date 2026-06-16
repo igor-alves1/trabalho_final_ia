@@ -1,159 +1,251 @@
 import pandas as pd
-from collections import Counter
 import numpy as np
-from typing import List, Set
-from eafc_utils import chemistry
+from typing import List
+from eafc_utils import fast_f, simulate_rollout
 from draft import generate_draft_pack
+import random
 
-def f(simulated_df: pd.DataFrame) -> float:
-    """Calcula a nota final do time simulado."""
-    chem = chemistry(simulated_df)
-    ovr = simulated_df['overall'].mean()
-    return ovr + ((chem['total'] * 1.2) / 11)
+FORMACAO = ['ST', 'LW', 'RW', 'CM', 'CM', 'CM', 'LB', 'CB', 'CB', 'RB', 'GK']
 
-def fast_f(squad_list: list) -> float:
-    """
-    PEDI PARA O GEMINI OTIMIZAR O CÓDIGO:
-    Versão ultrarrápida da função objetivo focada apenas nas simulações.
-    Recebe uma lista de dicionários nativos do Python ao invés de um DataFrame.
-    """
-    if not squad_list:
-        return 0.0
+class Bot:
+    def __init__(self, mode: str = "greedy", num_rollouts: int = 10):
+        self.mode = mode
+        self.num_rollouts = num_rollouts
 
-    count_league = Counter(p['league_id'] for p in squad_list)
-    count_nationality = Counter(p['nationality_id'] for p in squad_list)
-    count_club = Counter(p['club_team_id'] for p in squad_list)
-    
-    total_chemistry = 0.0
-    total_ovr = 0.0
-    
-    for player in squad_list:
-        total_ovr += player['overall']
+    def choose(self, options: pd.DataFrame, current_squad: pd.DataFrame = None, db: pd.DataFrame = None, current_round: int = 1, remaining_positions: List[str] = None) -> int:
+        if self.mode == "manual":
+            while True:
+                try:
+                    escolha = int(input("\nDigite o número da sua escolha (0 a 4): "))
+                    if 0 <= escolha <= 4:
+                        return escolha
+                    print("Escolha inválida. O número deve estar entre 0 e 4.")
+                except ValueError:
+                    print("Entrada inválida. Por favor, digite um número inteiro.")
+
+        elif self.mode == "greedy_f":
+            current_squad_list = current_squad.to_dict('records')
+            best_index = -1
+            best_position = None
+            best_score = -float('inf')
+            for i in range(len(options)):
+                candidate = options.iloc[i].to_dict()
+                card_positions = str(candidate['player_positions']).split(',')
+                for pos in remaining_positions:
+                    if (any(pos.strip() == p.strip() for p in card_positions)):
+                        candidate['choosen_position'] = pos
+                        score = fast_f(current_squad_list + [candidate])
+                        if score > best_score:
+                            best_score = score
+                            best_index = i
+                            best_position = pos
+            return best_index, best_position
+
+        elif self.mode == "expectimax":
+            if current_squad is None or db is None or remaining_positions is None:
+                raise ValueError("O modo expectimax exige 'current_squad', 'db' e 'remaining_positions'.")
+
+            db_cache = {}
+            for pos in set(remaining_positions):
+                df_pos = db[db['player_positions'].str.contains(pos, na=False)].copy()
+                weights = df_pos['weight'].values.astype(float)
+                probs = weights / weights.sum()
+                db_cache[pos] = {
+                    'records': df_pos.to_dict('records'),
+                    'probs': probs,
+                    'n_players': len(df_pos)
+                }
+
+            best_index = -1
+            best_position = None
+            max_expected_value = -float('inf')
+            current_squad_list = current_squad.to_dict('records')
+            for i in range(len(options)):
+                candidate_dict = options.iloc[i].to_dict()
+                card_positions = str(candidate_dict['player_positions']).split(',')
+                for pos in set(remaining_positions):
+                    if not any(pos.strip() == p.strip() for p in card_positions):
+                        continue
+                    candidate_dict['choosen_position'] = pos
+                    remaining_after = list(remaining_positions)
+                    remaining_after.remove(pos)
+                    tentative_squad_list = current_squad_list + [candidate_dict]
+                    rollout_scores = [
+                        simulate_rollout(tentative_squad_list, db_cache, remaining_after)
+                        for _ in range(self.num_rollouts)
+                    ]
+                    expected_value = np.mean(rollout_scores)
+                    if expected_value > max_expected_value:
+                        max_expected_value = expected_value
+                        best_index = i
+                        best_position = pos
+            return best_index, best_position
+
+        elif self.mode == "greedy_ovr":
+            best_index = -1
+            best_position = None
+            best_ovr = -float('inf')
+            for i in range(len(options)):
+                candidate = options.iloc[i].to_dict()
+                card_positions = str(candidate['player_positions']).split(',')
+                valid = [pos for pos in remaining_positions if any(pos.strip() == p.strip() for p in card_positions)]
+                if not valid:
+                    continue
+                if candidate['overall'] > best_ovr:
+                    best_ovr = candidate['overall']
+                    best_index = i
+                    best_position = valid[0] ## Nao afeta o OVR
+            return best_index, best_position
         
-        posicao_escolhida = player.get('choosen_position', '')
-        posicoes_da_carta = player.get('player_positions', '')
-        
-        if posicao_escolhida in posicoes_da_carta:
-            l_qtd = count_league[player['league_id']]
-            n_qtd = count_nationality[player['nationality_id']]
-            c_qtd = count_club[player['club_team_id']]
+        elif self.mode == "random":
+            i = random.randint(0, len(options) - 1)
+            candidate = options.iloc[i]
+            card_positions = str(candidate['player_positions']).split(',')
+            valid_position = [p for p in remaining_positions if any(p.strip() == cp.strip() for cp in card_positions)]
+            posicao = random.choice(valid_position)
+            return i, posicao 
             
-            l_pts = 3.0 if l_qtd >= 8 else (2.0 + (l_qtd - 5)/3 if l_qtd >= 5 else (1.0 + (l_qtd - 3)/2 if l_qtd >= 3 else l_qtd/3))
-            n_pts = 3.0 if n_qtd >= 8 else (2.0 + (n_qtd - 5)/3 if n_qtd >= 5 else (1.0 + (n_qtd - 2)/3 if n_qtd >= 2 else n_qtd/2))
-            c_pts = 3.0 if c_qtd >= 7 else (2.0 + (c_qtd - 4)/3 if c_qtd >= 4 else (1.0 + (c_qtd - 2)/2 if c_qtd >= 2 else c_qtd/2))
             
-            total_chemistry += min(3.0, l_pts + n_pts + c_pts)
+                    
 
-    mean_ovr = total_ovr / len(squad_list)
-    return mean_ovr + ((total_chemistry * 1.2) / 11)
+        else:
+            raise ValueError(f"Modo '{self.mode}' inválido. Use 'manual', 'greedy_f' ou 'expectimax'.")
 
-def simulate_rollout(tentative_squad_list: list, db_cache: dict, current_round: int, remaining_positions: list) -> float:
-    current_sim_squad = tentative_squad_list.copy()
+    ### Draft pré gerado
+    ### É pra poder avaliar os algoritmos no mesmo draft, tirando o ruído da aleatoriedade das cartas
+    ### A ideia é ter 55 cartas pré definidas, mas os algoritmos usam o DB para escolher ainda
+    @staticmethod
+    def generate_drafts(df, n=100, formacao=FORMACAO, n_cards=5, captain_slot=0):
+        """Gera n drafts pré-sorteados.
+        Retorna {0: draft, 1: draft, ...} onde cada draft é
+        {slot: {"posicao": str, "cartas": [dict, ...]}}."""
+        def plays_position(s, position):
+            return any(position == p.strip() for p in str(s).split(','))
+
+        drafts = {}
+        for i in range(n):
+            draft = {}
+            used_ids = set()
+            for slot_idx, pos in enumerate(formacao):
+                pool = df[df['player_positions'].apply(lambda s: plays_position(s, pos))]
+                pool = pool[~pool['player_id'].isin(used_ids)]
+                if slot_idx == captain_slot:
+                    elite = pool[pool['overall'] >= 88]
+                    if len(elite) >= n_cards:
+                        pool = elite
+                cartas = pool.sample(n=min(n_cards, len(pool)), weights='weight')
+                draft[slot_idx] = {"posicao": pos, "cartas": cartas.to_dict('records')}
+                used_ids.update(cartas['player_id'].tolist())
+            drafts[i] = draft
+        return drafts
+
+    def _choose_card(self, cartas, squad, pos, remaining_after, db_cache):
+        """Escolhe o índice (0-4) da melhor carta para a posição pos já fixada.
+        cartas é uma lista de dicts. squad é uma lista de dicts."""
+        if self.mode == "random":
+            return random.randint(0, len(cartas) - 1)
+
+        elif self.mode == "greedy_ovr":
+            return max(range(len(cartas)), key=lambda i: cartas[i]['overall'])
+
+        elif self.mode == "greedy_f":
+            def score(i):
+                cand = dict(cartas[i])
+                cand['choosen_position'] = pos
+                return fast_f(squad + [cand])
+            return max(range(len(cartas)), key=score)
+
+        elif self.mode == "expectimax":
+            best_index, best_ev = -1, -float('inf')
+            for i, carta in enumerate(cartas):
+                cand = dict(carta)
+                cand['choosen_position'] = pos
+                ev = np.mean([
+                    simulate_rollout(squad + [cand], db_cache, remaining_after)
+                    for _ in range(self.num_rollouts)
+                ])
+                if ev > best_ev:
+                    best_ev = ev
+                    best_index = i
+            return best_index
+
+        raise ValueError(f"Modo '{self.mode}' não suportado em play_draft.")
+
+    def play_draft(self, draft, df_draft):
+        """Joga um draft pré-gerado. Vê só 5 cartas por slot.
+        Expectimax usa o DB inteiro para rollouts, não as cartas restantes."""
+        squad = []
+
+        db_cache = None
+        if self.mode == "expectimax":
+            all_positions = set(slot["posicao"] for slot in draft.values())
+            db_cache = {}
+            for pos in all_positions:
+                df_pos = df_draft[df_draft['player_positions'].str.contains(pos, na=False)].copy()
+                weights = df_pos['weight'].values.astype(float)
+                probs = weights / weights.sum()
+                db_cache[pos] = {'records': df_pos.to_dict('records'), 'probs': probs, 'n_players': len(df_pos)}
+
+        for slot_idx in range(len(draft)):
+            slot = draft[slot_idx]
+            pos = slot["posicao"]
+            cartas = slot["cartas"]
+            remaining_after = [draft[i]["posicao"] for i in range(slot_idx + 1, len(draft))]
+
+            idx = self._choose_card(cartas, squad, pos, remaining_after, db_cache)
+            chosen = dict(cartas[idx])
+            chosen['choosen_position'] = pos
+            squad.append(chosen)
+
+        return squad
+    ####
     
-    current_ids = {p['player_id'] for p in current_sim_squad if 'player_id' in p}
-    
-    for pos in remaining_positions:
-        cache = db_cache[pos]
-        records = cache['records']
-        probs = cache['probs']
-        n_total = cache['n_players']
-        
-        n_draws = min(15, n_total)
-        drawn_indices = np.random.choice(n_total, size=n_draws, replace=False, p=probs)
-        
-        pack_dicts = []
-        for idx in drawn_indices:
-            player = records[idx]
-            
-            if player['player_id'] not in current_ids:
-                player_copy = player.copy()
-                player_copy['choosen_position'] = pos
-                pack_dicts.append(player_copy)
-                
-            if len(pack_dicts) == 5:
+
+
+
+class SimulatedAnnealingBot:
+    def __init__(self, temp_inicial=100, temp_final=0.1, alpha=0.995,iteracoes=5000):
+        self.temp_inicial = temp_inicial
+        self.temp_final = temp_final
+        self.alpha = alpha
+        self.iteracoes = iteracoes
+
+    def montar_time(self, db, formacao):
+        time_atual = []
+        ids_usados = set()
+        for pos in formacao:
+            pool = db[db['player_positions'].str.contains(pos, na=False)]
+            pool = pool[~pool['player_id'].isin(ids_usados)]
+            jogador = pool.sample(1, weights='weight').iloc[0].to_dict()
+            jogador['choosen_position'] = pos
+            time_atual.append(jogador)
+            ids_usados.add(jogador['player_id'])
+        melhor_time = time_atual.copy()
+        melhor_score = fast_f(melhor_time)
+        score_atual = melhor_score
+        temp = self.temp_inicial
+        for _ in range(self.iteracoes):
+            idx = random.randint(0, len(time_atual) - 1)
+            pos = time_atual[idx]['choosen_position']
+            ids_sem_atual = {j['player_id'] for j in time_atual if j != time_atual[idx]}
+            pool = db[db['player_positions'].str.contains(pos, na=False)]
+            pool = pool[~pool['player_id'].isin(ids_sem_atual)]
+            if pool.empty:
+                continue
+            novo_jogador = pool.sample(1, weights='weight').iloc[0].to_dict()
+            novo_jogador['choosen_position'] = pos
+            novo_time = time_atual.copy()
+            novo_time[idx] = novo_jogador
+            novo_score = fast_f(novo_time)
+            delta = novo_score - score_atual
+            if delta > 0 or random.random() < np.exp(delta / temp):
+                time_atual= novo_time
+                score_atual = novo_score
+                if score_atual > melhor_score:
+                    melhor_score = score_atual
+                    melhor_time = time_atual.copy()
+            temp *= self.alpha
+            if temp < self.temp_final:
                 break
-                
-        if not pack_dicts:
-            continue
-            
-        best_card = None
-        best_sim_score = -float('inf')
         
-        for candidate in pack_dicts:
-            test_squad = current_sim_squad + [candidate]
-            score = fast_f(test_squad)
-            
-            if score > best_sim_score:
-                best_sim_score = score
-                best_card = candidate
-                
-        if best_card is not None:
-            current_ids.add(best_card['player_id'])
-            current_sim_squad.append(best_card)
-            
-    return fast_f(current_sim_squad)
-
-def choose(options: pd.DataFrame, mode: str = "greedy", current_squad: pd.DataFrame = None, db: pd.DataFrame = None, current_round: int = 1, remaining_positions: List[str] = None, num_rollouts: int = 10) -> int:
-    """
-    Isola a lógica de decisão do draft com Expectimax e mecânicas oficiais.
-    
-    Args:
-        options: DataFrame contendo as 5 cartas sorteadas atualmente.
-        mode: Define a heurística do bot.
-        current_squad: DataFrame com as escolhas já consolidadas no draft.
-        db: Base de dados completa com pesos e posições.
-        current_round: A rodada da escolha atual (1 a 11).
-        remaining_positions: Lista com as strings das posições que faltam nas rodadas seguintes.
-        num_rollouts: Quantidade de simulações Monte Carlo por opção (K).
-    """
-    if mode == "manual":
-        while True:
-            try:
-                escolha = int(input("\nDigite o número da sua escolha (0 a 4): "))
-                if 0 <= escolha <= 4:
-                    return escolha
-                print("Escolha inválida. O número deve estar entre 0 e 4.")
-            except ValueError:
-                print("Entrada inválida. Por favor, digite um número inteiro.")
-    elif mode == "greedy":
-        return options['overall'].idxmax()
-    elif mode == "expectimax":
-        if current_squad is None or db is None or remaining_positions is None:
-            raise ValueError("O modo expectimax exige 'current_squad', 'db' e 'remaining_positions'.")
-            
-        db_cache = {}
-        for pos in set(remaining_positions):
-            df_pos = db[db['player_positions'].str.contains(pos, na=False)].copy()
-            
-            weights = df_pos['weight'].values.astype(float)
-            probs = weights / weights.sum()
-            
-            db_cache[pos] = {
-                'records': df_pos.to_dict('records'),
-                'probs': probs,
-                'n_players': len(df_pos)
-            }
-        
-        best_relative_index = -1
-        max_expected_value = -float('inf')
-        
-        current_squad_list = current_squad.to_dict('records')
-        
-        for i in range(len(options)):
-            candidate_dict = options.iloc[i].to_dict()
-            tentative_squad_list = current_squad_list + [candidate_dict]
-            
-            rollout_scores = []
-            for _ in range(num_rollouts):
-                score = simulate_rollout(tentative_squad_list, db_cache, current_round, remaining_positions)
-                rollout_scores.append(score)
-                
-            expected_value = np.mean(rollout_scores)
-            
-            if expected_value > max_expected_value:
-                max_expected_value = expected_value
-                best_relative_index = i
-                
-        return best_relative_index
-    else:
-        raise ValueError("Parâmetro 'mode' possui um valor impróprio")
+        return pd.DataFrame(melhor_time)
