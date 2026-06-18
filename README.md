@@ -65,4 +65,34 @@ Isso força o bot a valorizar o entrosamento sem sacrificar demasiadamente a qua
 O bot imprimirá no console, rodada a rodada, as opções lidas da base de dados, a escolha avaliada pelo algoritmo de Expectimax e, ao final, o resumo do time montado e sua nota final.
 
 ---
+
+## 🖥️ Interface Web (React)
+
+Em `web/` há uma interface web onde você monta seu próprio time de Draft (formação
+fixa **4-3-3**) e vê a IA jogando o **mesmo draft** para comparar as notas
+(OVR, Química e Nota Final).
+
+**Arquitetura:**
+* **Backend** (`web/backend/server.py`): servidor HTTP leve (stdlib, sem novas
+  dependências) que importa `bot.py` / `eafc_utils.py` e expõe uma API JSON
+  (`/api/draft/new`, `/evaluate`, `/ai`). As imagens dos jogadores vêm da coluna
+  `player_face_url` do CSV (CDN sofifa) e são baixadas/cacheadas em
+  `web/backend/static/faces/` — sob demanda pelo servidor ou em lote com
+  `web/backend/download_faces.py`.
+* **Frontend** (`web/frontend/`): React + Vite (cartas estilo FUT, campo 4-3-3,
+  painel de comparação Humano × IA).
+
+**Como rodar:**
+```bash
+# tudo de uma vez (sobe backend na 8000 e frontend na 5173)
+bash web/run.sh
+# depois abra http://localhost:5173
+
+# (opcional) baixar todas as imagens do pool antes:
+conda run -n venv python web/backend/download_faces.py
+```
+
+Veja `STEPS.md` para o detalhamento das decisões e passos.
+
+---
 *Projeto desenvolvido para fins de pesquisa em Inteligência Artificial e Algoritmos de Busca.*

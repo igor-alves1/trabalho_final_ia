@@ -1,1 +1,4 @@
 __pycache__
+node_modules
+web/frontend/dist
+web/backend/static/faces/*.png
